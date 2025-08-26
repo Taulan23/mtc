@@ -1,6 +1,15 @@
 # Miner in the Cave (MITC)
 
+[![GitHub](https://img.shields.io/badge/GitHub-Taulan23/mtc-blue)](https://github.com/Taulan23/mtc)
+
 Небольшая игра на Python с использованием pygame и pymunk.
+
+## 📦 Скачать и установить
+
+```bash
+git clone https://github.com/Taulan23/mtc.git
+cd mtc
+```
 
 ## 🚀 Быстрый запуск
 
