@@ -58,10 +58,17 @@ def _try_load_block_images_for_type(bt: BlockType) -> Dict[str, Optional[pygame.
 
 class Block(pygame.sprite.Sprite):
     """Спрайт блока с HP и сменой спрайта по порогам HP."""
+    # Статический счетчик для генерации уникальных ID
+    _next_id = 0
+
     def __init__(self, world_x: int, world_y: int, btype: BlockType,
                  images_by_thr: Dict[str, Optional[pygame.Surface]],
                  pm_space: Optional[pymunk.Space] = None):
         super().__init__()
+        # Генерируем уникальный ID для блока
+        self.id = Block._next_id
+        Block._next_id += 1
+
         self.type = btype
         self.color = btype.value["color"]
         self.max_health = max(1, btype.value["hardness"] * BLOCK_HP_PER_HARDNESS)
@@ -84,12 +91,13 @@ class Block(pygame.sprite.Sprite):
             self.pm_body.position = (self.world_x + BLOCK_SIZE // 2, self.world_y + BLOCK_SIZE // 2)
 
             self.pm_shape = pymunk.Poly.create_box(self.pm_body, (BLOCK_SIZE, BLOCK_SIZE))
-            self.pm_shape.elasticity = 0.0  # блоки статичные, без отскока
-            self.pm_shape.friction = 1.0  # максимальное трение для хорошего контакта
+            self.pm_shape.elasticity = 0.2  # увеличиваем упругость
+            self.pm_shape.friction = 0.3  # уменьшаем трение
             self.pm_shape.filter = pymunk.ShapeFilter(group=2)  # блоки не сталкиваются между собой
             self.pm_shape.block_ref = self
             self.pm_shape.collision_type = 2
             self.pm_space.add(self.pm_body, self.pm_shape)
+            print(f"Создан блок {self.id} с физикой на позиции {self.pm_body.position}")  # отладка
 
     # ======= Вспомогательные =======
 

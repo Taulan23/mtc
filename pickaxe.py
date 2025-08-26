@@ -61,6 +61,8 @@ class Pickaxe(pygame.sprite.Sprite):
         self.min_hit_speed = 2.5
         self.min_travel_px_between_hits = 3
 
+        # Упрощенная система - убираем ручное управление
+
         # ---- Pymunk: тело + формы по маске ----
         self.body: pymunk.Body = None
         self.shapes = []
@@ -106,18 +108,19 @@ class Pickaxe(pygame.sprite.Sprite):
 
     def _build_physics_body(self, pick_type: PickaxeType):
         self._clear_physics()
-        mass = 2
+        mass = 8  # увеличиваем массу для лучшего контакта с блоками
         w, h = self.image.get_size()
         moment = pymunk.moment_for_box(mass, (w, h))
         self.body = pymunk.Body(mass, moment)
         self.body.position = self.x, self.y
+        # Убираем кастомную функцию скорости для упрощения
         self.space.add(self.body)
 
         # Создаем простую прямоугольную форму для кирки
-        w, h = self.image.get_size()
+        w, h = self.original_image.get_size()
         shape = pymunk.Poly.create_box(self.body, (w, h))
-        shape.friction = 0.8  # увеличено трение для лучшего контакта
-        shape.elasticity = 0.1  # немного увеличено для более естественного отскока
+        shape.friction = 0.15  # еще меньше трения для очень плавного скольжения
+        shape.elasticity = 0.01  # почти нулевая упругость
         shape.collision_type = 1
         self.space.add(shape)
         self.shapes.append(shape)
@@ -162,6 +165,8 @@ class Pickaxe(pygame.sprite.Sprite):
         vx, vy = self.body.velocity
         self.body.velocity = (vx + 200, vy)
 
+    # Убираем ручное управление движением вниз для упрощения
+
     def apply_command(self, command: str):
         cmd = command.lower()
         for pickaxe_type in PickaxeType:
@@ -177,18 +182,23 @@ class Pickaxe(pygame.sprite.Sprite):
         if not self.body: return
         vx, vy = self.body.velocity
         if from_side:
-            vx = -0.15 * vx
+            vx = -0.3 * vx  # более сильный отскок от стен
         else:
-            vy = -0.15 * vy
-        if abs(vx) < self.bounce_stop: vx = 0.0
-        if abs(vy) < self.bounce_stop: vy = 0.0
+            vy = -0.2 * vy  # умеренный отскок от земли/потолка
+
+        # Убираем полную остановку - позволяем минимальному движению
+        if abs(vx) < self.bounce_stop * 2:  # увеличиваем порог
+            vx = 0.0
+        if abs(vy) < self.bounce_stop * 2:  # увеличиваем порог
+            vy = 0.0
         self.body.velocity = (vx, vy)
 
     def apply_friction(self):
         if not self.body: return
         vx, vy = self.body.velocity
         vx *= self.friction_factor
-        if abs(vx) < self.bounce_stop:
+        # Увеличиваем порог остановки для более плавного движения
+        if abs(vx) < self.bounce_stop * 1.5:
             vx = 0.0
         self.body.velocity = (vx, vy)
 
@@ -210,8 +220,11 @@ class Pickaxe(pygame.sprite.Sprite):
         if not self.active or not self.body:
             return
 
-        # Отладка
-        # print(f"Pickaxe world pos: {self.body.position}, velocity: {self.body.velocity}")
+        # Отладка синхронизации
+        if self.body:
+            # print(f"Pickaxe body pos: {self.body.position}, self pos: ({self.x}, {self.y})")
+            # print(f"Rect pos: ({self.rect.left}, {self.rect.top}), size: {self.rect.size}")
+            pass
 
         self.apply_friction()
         w = self.rect.width
@@ -230,19 +243,48 @@ class Pickaxe(pygame.sprite.Sprite):
         #     self.reset_position()
 
         self.body.angular_velocity *= self.rotation_damping
-        self.x, self.y = self.body.position
+
+        # Добавляем минимальную скорость падения, чтобы избежать зависания
+        vx, vy = self.body.velocity
+        body_x, body_y = self.body.position
+
+        # Предотвращаем слишком высокое поднятие кирки
+        if body_y < -500:  # если кирка поднялась слишком высоко
+            self.body.position = (body_x, -500)  # ограничиваем позицию
+            if vy < 0:  # если движется вверх
+                vy = 0  # останавливаем подъем
+
+        # Добавляем минимальную скорость падения, чтобы избежать зависания
+        if vy >= 0 and vy < 30 and body_y < SCREEN_HEIGHT * 2:  # если движемся вниз слишком медленно
+            vy = min(vy + 8, 120)  # добавляем значительную скорость падения
+        elif vy < 0 and abs(vy) < 10:  # если движемся вверх слишком медленно
+            vy = max(vy - 5, -50)  # добавляем небольшое ускорение вверх
+
+        self.body.velocity = (vx, vy)
+
         angle_deg = -math.degrees(self.body.angle)
         self.image = pygame.transform.rotate(self.original_image, angle_deg)
         self._sync_rect_from_state(scroll_y)
         self.mask = pygame.mask.from_surface(self.image)
 
     def _sync_rect_from_state(self, scroll_y: float = 0.0):
+        if not self.body:
+            return
+
         self.rect.width = self.image.get_width()
         self.rect.height = self.image.get_height()
-        bx, by = self.body.position
-        # экранная позиция = мировая - смещение камеры
-        self.rect.left = int(bx - self.rect.width // 2)
-        self.rect.top = int(by - self.rect.height // 2 - scroll_y)
+
+        # Синхронизируем координаты с физическим телом
+        # Экранная позиция = мировая позиция - смещение камеры
+        body_x, body_y = self.body.position
+        self.rect.centerx = int(body_x)
+        self.rect.centery = int(body_y - scroll_y)
+
+        # Сохраняем мировые координаты для отладки
+        self.x = float(body_x)
+        self.y = float(body_y)
+
+    # Убираем кастомную функцию скорости для упрощения физики
 
     def scroll_limit_y(self):
         """Нижний предел, при выходе за который кирка ресетится"""

@@ -12,7 +12,7 @@ import pymunk.pygame_util
 class Game:
     def __init__(self, screen):
         self.space = pymunk.Space()
-        self.space.gravity = (0, 1200)  # немного уменьшаем гравитацию для более стабильной физики
+        self.space.gravity = (0, 400)  # еще больше уменьшаем гравитацию для лучшего контакта с блоками
         self._physics_dt = 1.0 / 60.0
 
         # системы
@@ -66,6 +66,7 @@ class Game:
                 self.pickaxe.move_left()
             elif event.key == pygame.K_RIGHT:
                 self.pickaxe.move_right()
+            # Убираем ручное управление движением вниз
             elif event.key == pygame.K_SPACE:
                 if not self.pickaxe.active:
                     self.pickaxe.activate(self.pickaxe.type, self.pickaxe.size)
@@ -88,6 +89,8 @@ class Game:
             elif event.key == pygame.K_d:
                 self.block_system.apply_chat_command("!spawn diamond")
 
+        # Убираем обработку KEYUP для упрощения
+
     # == столкновения ==
     def _pickaxe_block_collision(self, arbiter, space, data):
         pick_shape, block_shape = arbiter.shapes
@@ -95,30 +98,24 @@ class Game:
         if not block or not block.pm_body or block.health <= 0:
             return False
 
-        # отражение импульса
-        if block.pm_body is not None:
-            dx = self.pickaxe.body.position.x - block.pm_body.position.x
-            dy = self.pickaxe.body.position.y - block.pm_body.position.y
-        else:
-            # fallback для блоков без физического тела
-            dx = self.pickaxe.body.position.x - (block.world_x + BLOCK_SIZE // 2)
-            dy = self.pickaxe.body.position.y - (block.world_y + BLOCK_SIZE // 2)
-        n = pymunk.Vec2d(dx, dy).normalized()
+        # Убираем принудительную остановку скорости - позволяем физике работать естественно
+        # Добавляем небольшой импульс при любом контакте для предотвращения "прилипания"
 
-        v = self.pickaxe.body.velocity
-        vn = v.dot(n) * n
-        vt = v - vn
-        restitution = 0.2
-        new_v = vt - vn * restitution
-        self.pickaxe.body.velocity = new_v
-
-        torque = n.cross(v) * 0.001
-        self.pickaxe.body.angular_velocity += torque
+        # Добавляем небольшой импульс при любом контакте для предотвращения "прилипания"
+        contact_impulse_x = random.uniform(-3, 3)
+        contact_impulse_y = random.uniform(-2, 5)  # немного вниз
+        self.pickaxe.body.apply_impulse_at_local_point((contact_impulse_x, contact_impulse_y), (0, 0))
 
         # --- урон ---
         if self.pickaxe.can_hit_now():
             destroyed = block.take_damage(self.pickaxe.type.value["speed"])
             if destroyed:
+                # При разрушении блока добавляем дополнительный импульс для продолжения движения
+                destroy_impulse_x = random.uniform(-15, 15)  # более сильный импульс для движения в стороны
+                destroy_impulse_y = random.uniform(10, 40)  # сильный импульс вниз для продолжения падения
+                self.pickaxe.body.apply_impulse_at_local_point((destroy_impulse_x, destroy_impulse_y), (0, 0))
+
+                # Обработка ресурсов только при разрушении блока
                 resmap = {
                     BlockType.COAL: "coal",
                     BlockType.IRON: "iron",
@@ -144,6 +141,9 @@ class Game:
                 self.particles.add_block_break_effect(
                     effect_x, effect_y, block.type.value["color"]
                 )
+            else:
+                # При простом ударе по блоку - вообще без импульса, чтобы кирка оставалась на месте
+                pass
 
         return True
 
@@ -152,7 +152,8 @@ class Game:
         pick_shape, block_shape = arbiter.shapes
         block = getattr(block_shape, "block_ref", None)
         if block:
-            self.pickaxe.begin_contact(block.health)  # передаем ID блока
+            print(f"НАЧАЛО КОНТАКТА с блоком {block.id}")  # отладка
+            self.pickaxe.begin_contact(block.id)  # исправляем - передаем ID, а не health
         return True
 
     def _collision_separate(self, arbiter, space, data):
@@ -160,6 +161,7 @@ class Game:
         pick_shape, block_shape = arbiter.shapes
         block = getattr(block_shape, "block_ref", None)
         if block:
+            print(f"КОНЕЦ КОНТАКТА с блоком {block.id}")  # отладка
             self.pickaxe.end_contact()
         return True
 
@@ -171,21 +173,41 @@ class Game:
         # обновляем кирку и частицы
         self.particles.update()
 
-        # скролл камеры только когда кирка касается блоков или падает вниз
+        # Плавный скролл камеры - следует за киркой, но с ограничениями
         if self.pickaxe.body is not None:
             pickaxe_y = self.pickaxe.body.position.y
 
-            # Камера движется ВНИЗ только если кирка касается блоков и падает
-            if self.pickaxe.in_contact and pickaxe_y > self.scroll_y + SCREEN_HEIGHT * 0.6:
-                self.scroll_y = pickaxe_y - SCREEN_HEIGHT * 0.6
+            # Рассчитываем желаемую позицию камеры (кирка в центре экрана)
+            target_scroll = pickaxe_y - SCREEN_HEIGHT * 0.5
 
-            # Камера движется ВВЕРХ только если кирка поднимается вверх и уходит за верх экрана
-            elif not self.pickaxe.in_contact and pickaxe_y < self.scroll_y + SCREEN_HEIGHT * 0.3:
-                target_scroll = pickaxe_y - SCREEN_HEIGHT * 0.3
-                if target_scroll > self.scroll_y:
-                    self.scroll_y += (target_scroll - self.scroll_y) * 0.05  # очень плавное движение вверх
+            # Плавное следование за целью с ограничением скорости
+            scroll_speed = 8.0  # скорость следования камеры
+            scroll_diff = target_scroll - self.scroll_y
+            if abs(scroll_diff) > scroll_speed:
+                self.scroll_y += scroll_speed * (1 if scroll_diff > 0 else -1)
+            else:
+                self.scroll_y = target_scroll
 
-            self.scroll_y = max(0, self.scroll_y)
+            # Ограничиваем минимальную позицию камеры
+            self.scroll_y = max(-100, self.scroll_y)
+
+            # Проверяем, не ушла ли кирка слишком далеко от центра экрана
+            screen_pickaxe_y = pickaxe_y - self.scroll_y
+            center_offset = abs(screen_pickaxe_y - SCREEN_HEIGHT * 0.5)
+
+            # Если кирка ушла слишком далеко от центра (больше чем на 200 пикселей)
+            if center_offset > 200:
+                # Плавно возвращаем кирку ближе к центру
+                if screen_pickaxe_y < SCREEN_HEIGHT * 0.5 - 100:
+                    # Кирка слишком высоко на экране - добавляем импульс вниз
+                    self.pickaxe.body.velocity = (self.pickaxe.body.velocity.x, min(self.pickaxe.body.velocity.y + 5, 50))
+                elif screen_pickaxe_y > SCREEN_HEIGHT * 0.5 + 100:
+                    # Кирка слишком низко на экране - добавляем импульс вверх
+                    self.pickaxe.body.velocity = (self.pickaxe.body.velocity.x, max(self.pickaxe.body.velocity.y - 5, -30))
+
+            # Расширенная отладка для анализа проблемы формы
+            vx, vy = self.pickaxe.body.velocity
+            print(f"Камера: кирка Y={pickaxe_y:.1f}, экран Y={screen_pickaxe_y:.1f}, скорость=({vx:.1f}, {vy:.1f}), скролл={self.scroll_y}, контакт={self.pickaxe.in_contact}")  # отладка
 
         # дополнительный скролл при необходимости (для совместимости)
         if self.scroll_frames_left > 0:
@@ -240,7 +262,7 @@ class Game:
 
     def _draw_pickaxe(self, screen):
         rect = self.pickaxe.get_rect()
-        rect.y -= int(self.scroll_y)
+        # rect.y -= int(self.scroll_y)  # Убираем двойное вычитание scroll_y
         screen.blit(self.pickaxe.image, rect)
 
         # Индикатор контакта - красный когда касается, зеленый когда нет
@@ -273,6 +295,65 @@ class Game:
         contact_txt = font.render(contact_status, True, contact_color)
         screen.blit(contact_txt, (10, y))
 
+        # Упрощенная информация об управлении
+        y += 30
+        control_hint = "← → движение, ПРОБЕЛ активировать"
+        hint_color = (200, 200, 200)  # серый
+        hint_txt = font.render(control_hint, True, hint_color)
+        screen.blit(hint_txt, (10, y))
+
+        # Упрощенная отладочная информация
+        y += 30
+        if self.pickaxe.body:
+            pos_info = f"Позиция: ({int(self.pickaxe.body.position.x)}, {int(self.pickaxe.body.position.y)})"
+            pos_txt = font.render(pos_info, True, (255, 255, 0))
+            screen.blit(pos_txt, (10, y))
+
+    def _draw_hitboxes(self, screen):
+        """Отладочная отрисовка хитбоксов"""
+        # Рисуем хитбокс кирки
+        if self.pickaxe.body and self.pickaxe.active:
+            for shape in self.pickaxe.shapes:
+                if isinstance(shape, pymunk.Poly):
+                    # Получаем вершины полигона
+                    vertices = shape.get_vertices()
+                    if len(vertices) >= 3:  # треугольник или больше
+                        # Преобразуем мировые координаты в экранные
+                        screen_vertices = []
+                        for vertex in vertices:
+                            world_x, world_y = vertex
+                            screen_x = int(world_x)
+                            screen_y = int(world_y - self.scroll_y)
+                            screen_vertices.append((screen_x, screen_y))
+
+                        # Рисуем красный контур хитбокса
+                        if len(screen_vertices) >= 3:
+                            pygame.draw.polygon(screen, (255, 0, 0), screen_vertices, 2)
+            
+            # Рисуем центр физического тела кирки
+            center_x = int(self.pickaxe.body.position.x)
+            center_y = int(self.pickaxe.body.position.y - self.scroll_y)
+            pygame.draw.circle(screen, (0, 255, 0), (center_x, center_y), 3)  # зеленый центр
+            
+            # Рисуем контур спрайта кирки для сравнения
+            pygame.draw.rect(screen, (0, 0, 255), self.pickaxe.rect, 2)  # синий контур спрайта
+
+        # Рисуем хитбоксы блоков
+        for block in self.block_system.block_sprites:
+            if block.pm_shape and isinstance(block.pm_shape, pymunk.Poly):
+                vertices = block.pm_shape.get_vertices()
+                if len(vertices) >= 3:
+                    screen_vertices = []
+                    for vertex in vertices:
+                        world_x, world_y = vertex
+                        screen_x = int(world_x)
+                        screen_y = int(world_y - self.scroll_y)
+                        screen_vertices.append((screen_x, screen_y))
+
+                    # Рисуем синий контур для блоков
+                    if len(screen_vertices) >= 3:
+                        pygame.draw.polygon(screen, (0, 0, 255), screen_vertices, 1)
+
     def draw(self, screen):
         self._draw_background(screen)
         self._draw_borders(screen, self.border_texture)
@@ -281,6 +362,7 @@ class Game:
         self._draw_pickaxe(screen)
         self._draw_hud(screen)
 
-        #self._draw_hitboxes(screen)  # включи при отладке
-        #self.space.debug_draw(self.draw_options)  # pymunk отладка
+        # Включаем отладку хитбоксов для диагностики проблемы
+        self._draw_hitboxes(screen)  # включи при отладке
+        # self.space.debug_draw(self.draw_options)  # pymunk отладка
         
