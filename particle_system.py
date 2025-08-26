@@ -1,6 +1,6 @@
 import random
 import pygame
-from mitc.settings import BLOCK_SIZE
+from settings import BLOCK_SIZE
 
 class ParticleSystem:
     def __init__(self, particle_count=15, particle_life=30):

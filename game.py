@@ -1,9 +1,9 @@
 import pygame
-from mitc.block_system import BlockSystem
-from mitc.pickaxe import Pickaxe
-from mitc.particle_system import ParticleSystem
-from mitc.settings import *
-from mitc.enums import PickaxeType, BlockType
+from block_system import BlockSystem
+from pickaxe import Pickaxe
+from particle_system import ParticleSystem
+from settings import *
+from enums import PickaxeType, BlockType
 import random
 import pymunk
 import pymunk.pygame_util
@@ -12,7 +12,7 @@ import pymunk.pygame_util
 class Game:
     def __init__(self, screen):
         self.space = pymunk.Space()
-        self.space.gravity = (0, 1500)
+        self.space.gravity = (0, 1200)  # немного уменьшаем гравитацию для более стабильной физики
         self._physics_dt = 1.0 / 60.0
 
         # системы
@@ -26,10 +26,10 @@ class Game:
         self.scroll_frames_left = 0
 
         # фон
-        self.background = pygame.image.load("evn/mitc/assets/backgrounds/background.png").convert()
+        self.background = pygame.image.load("assets/backgrounds/background.png").convert()
         self.background = pygame.transform.scale(self.background, (SCREEN_WIDTH, SCREEN_HEIGHT))
 
-        self.border_texture = pygame.image.load("evn/mitc/assets/blocks/bedrock/bedrock.png").convert_alpha()
+        self.border_texture = pygame.image.load("assets/blocks/bedrock/bedrock.png").convert_alpha()
         self.border_texture = pygame.transform.scale(self.border_texture, (BLOCK_SIZE, BLOCK_SIZE))
 
         # ресурсы
@@ -51,9 +51,11 @@ class Game:
             except Exception:
                 self.resource_icons[name] = None
 
-        # хэндлер столкновений
-        handler = self.space.add_collision_handler(1, 2)  # 1 = кирка, 2 = блок
-        handler.pre_solve = self._pickaxe_block_collision
+        # хэндлер столкновений для новой версии Pymunk
+        self.space.on_collision(1, 2,
+                               begin=self._collision_begin,
+                               pre_solve=self._pickaxe_block_collision,
+                               separate=self._collision_separate)
 
         self.draw_options = pymunk.pygame_util.DrawOptions(screen)
 
@@ -94,8 +96,13 @@ class Game:
             return False
 
         # отражение импульса
-        dx = self.pickaxe.body.position.x - block.pm_body.position.x
-        dy = self.pickaxe.body.position.y - block.pm_body.position.y
+        if block.pm_body is not None:
+            dx = self.pickaxe.body.position.x - block.pm_body.position.x
+            dy = self.pickaxe.body.position.y - block.pm_body.position.y
+        else:
+            # fallback для блоков без физического тела
+            dx = self.pickaxe.body.position.x - (block.world_x + BLOCK_SIZE // 2)
+            dy = self.pickaxe.body.position.y - (block.world_y + BLOCK_SIZE // 2)
         n = pymunk.Vec2d(dx, dy).normalized()
 
         v = self.pickaxe.body.velocity
@@ -127,10 +134,33 @@ class Game:
                 elif block.type == BlockType.REDSTONE:
                     self.resources["redstone"] += random.randint(1, 5)
 
+                # Используем позицию физического тела для эффекта частиц
+                if block.pm_body is not None:
+                    effect_x = block.pm_body.position.x - BLOCK_SIZE // 2
+                    effect_y = block.pm_body.position.y - BLOCK_SIZE // 2
+                else:
+                    effect_x = block.world_x
+                    effect_y = block.world_y
                 self.particles.add_block_break_effect(
-                    block.world_x, block.world_y, block.type.value["color"]
+                    effect_x, effect_y, block.type.value["color"]
                 )
 
+        return True
+
+    def _collision_begin(self, arbiter, space, data):
+        """Обработчик начала коллизии"""
+        pick_shape, block_shape = arbiter.shapes
+        block = getattr(block_shape, "block_ref", None)
+        if block:
+            self.pickaxe.begin_contact(block.health)  # передаем ID блока
+        return True
+
+    def _collision_separate(self, arbiter, space, data):
+        """Обработчик конца коллизии"""
+        pick_shape, block_shape = arbiter.shapes
+        block = getattr(block_shape, "block_ref", None)
+        if block:
+            self.pickaxe.end_contact()
         return True
 
     # == обновление ==
@@ -139,24 +169,31 @@ class Game:
         self.space.step(self._physics_dt)
 
         # обновляем кирку и частицы
-        
         self.particles.update()
-        target_scroll = max(0, self.pickaxe.body.position.y - SCREEN_HEIGHT // 4)
-        if target_scroll > self.scroll_y:
-            self.scroll_y += (target_scroll - self.scroll_y) * 0.15  # плавное догоняние
-        self.scroll_y = max(0, self.scroll_y)
-        # плавный скролл камеры
+
+        # скролл камеры только когда кирка касается блоков или падает вниз
+        if self.pickaxe.body is not None:
+            pickaxe_y = self.pickaxe.body.position.y
+
+            # Камера движется ВНИЗ только если кирка касается блоков и падает
+            if self.pickaxe.in_contact and pickaxe_y > self.scroll_y + SCREEN_HEIGHT * 0.6:
+                self.scroll_y = pickaxe_y - SCREEN_HEIGHT * 0.6
+
+            # Камера движется ВВЕРХ только если кирка поднимается вверх и уходит за верх экрана
+            elif not self.pickaxe.in_contact and pickaxe_y < self.scroll_y + SCREEN_HEIGHT * 0.3:
+                target_scroll = pickaxe_y - SCREEN_HEIGHT * 0.3
+                if target_scroll > self.scroll_y:
+                    self.scroll_y += (target_scroll - self.scroll_y) * 0.05  # очень плавное движение вверх
+
+            self.scroll_y = max(0, self.scroll_y)
+
+        # дополнительный скролл при необходимости (для совместимости)
         if self.scroll_frames_left > 0:
             remaining = (self.scroll_target - self.scroll_y)
             delta = remaining / self.scroll_frames_left
             self.scroll_y += delta
             self.scroll_frames_left -= 1
 
-        # если кирка ушла ниже экрана → скроллим камеру
-        if self.pickaxe.active and self.pickaxe.body.position.y > (INITIAL_OFFSET + BLOCK_SIZE):
-            self.scroll_target = self.scroll_y + BLOCK_SIZE
-            self.scroll_frames_left = SCROLL_SMOOTH_FRAMES
-        
         self.pickaxe.update(self.scroll_y)
         # обновляем блоки (только экранные позиции!)
         self.block_system.update(self.scroll_y)
@@ -205,7 +242,14 @@ class Game:
         rect = self.pickaxe.get_rect()
         rect.y -= int(self.scroll_y)
         screen.blit(self.pickaxe.image, rect)
-        pygame.draw.circle(screen, (255, 0, 0), rect.center, 4)
+
+        # Индикатор контакта - красный когда касается, зеленый когда нет
+        contact_color = (255, 0, 0) if self.pickaxe.in_contact else (0, 255, 0)
+        pygame.draw.circle(screen, contact_color, rect.center, 4)
+
+        # Дополнительная линия для лучшей видимости контакта
+        if self.pickaxe.in_contact:
+            pygame.draw.line(screen, (255, 255, 0), rect.center, (rect.centerx, rect.centery - 10), 2)
 
     def _draw_hud(self, screen):
         font = pygame.font.SysFont("Arial", 24)
@@ -221,6 +265,13 @@ class Game:
         depth = -(int(self.pickaxe.body.position.y // BLOCK_SIZE))
         depth_txt = font.render(f"Y: {depth}", True, (255, 255, 0))
         screen.blit(depth_txt, (10, y))
+
+        # Информация о контакте
+        y += 30
+        contact_status = "Контакт: ДА" if self.pickaxe.in_contact else "Контакт: НЕТ"
+        contact_color = (0, 255, 0) if self.pickaxe.in_contact else (255, 0, 0)
+        contact_txt = font.render(contact_status, True, contact_color)
+        screen.blit(contact_txt, (10, y))
 
     def draw(self, screen):
         self._draw_background(screen)

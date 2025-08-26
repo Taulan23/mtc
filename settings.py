@@ -51,12 +51,12 @@ PICKAXE_IMAGE_FILES = {
 
 
 RESOURCE_ICONS = {
-    "coal": "evn/mitc/assets/ui/coal.png",
-    "iron": "evn/mitc/assets/ui/iron.png",
-    "copper": "evn/mitc/assets/ui/copper.png",
-    "gold": "evn/mitc/assets/ui/gold.png",
-    "diamond": "evn/mitc/assets/ui/diamond.png",
-    "emerald": "evn/mitc/assets/ui/emerald.png",
-    "lapis": "evn/mitc/assets/ui/lapis.png",
-    "redstone": "evn/mitc/assets/ui/redstone.png",
+    "coal": "assets/ui/coal.png",
+    "iron": "assets/ui/iron.png",
+    "copper": "assets/ui/copper.png",
+    "gold": "assets/ui/gold.png",
+    "diamond": "assets/ui/diamond.png",
+    "emerald": "assets/ui/emerald.png",
+    "lapis": "assets/ui/lapis.png",
+    "redstone": "assets/ui/redstone.png",
 }

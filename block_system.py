@@ -4,8 +4,8 @@ import pygame
 import pymunk
 import logging
 from typing import Dict, Optional
-from mitc.enums import BlockType
-from mitc.settings import (
+from enums import BlockType
+from settings import (
     BLOCK_SIZE, BORDER_WIDTH, SCREEN_HEIGHT, GRID_COLS,
     INITIAL_SPAWN_ROWS, INITIAL_OFFSET, BLOCK_HP_PER_HARDNESS,
     BLOCK_HP_THRESHOLDS, BLOCKS_DIR
@@ -80,11 +80,12 @@ class Block(pygame.sprite.Sprite):
 
         if self.pm_space is not None:
             self.pm_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
-            self.pm_body.position = (self.rect.centerx, self.rect.centery)
+            # Используем мировые координаты вместо экранных для корректной физики
+            self.pm_body.position = (self.world_x + BLOCK_SIZE // 2, self.world_y + BLOCK_SIZE // 2)
 
             self.pm_shape = pymunk.Poly.create_box(self.pm_body, (BLOCK_SIZE, BLOCK_SIZE))
-            self.pm_shape.elasticity = 0.0
-            self.pm_shape.friction = 0.95
+            self.pm_shape.elasticity = 0.0  # блоки статичные, без отскока
+            self.pm_shape.friction = 1.0  # максимальное трение для хорошего контакта
             self.pm_shape.filter = pymunk.ShapeFilter(group=2)  # блоки не сталкиваются между собой
             self.pm_shape.block_ref = self
             self.pm_shape.collision_type = 2
@@ -151,8 +152,10 @@ class Block(pygame.sprite.Sprite):
         """
         self.rect.x = self.world_x
         self.rect.y = int(self.world_y - scroll_y)
-        if self.pm_body is not None:
-            self.pm_body.position = (self.rect.centerx, self.rect.centery)
+        # Убираем принудительное обновление позиции физического тела
+        # для кинематических тел это может вызвать проблемы с коллизиями
+        # if self.pm_body is not None:
+        #     self.pm_body.position = (self.rect.centerx, self.rect.centery)
 
 
 class BlockSystem:

@@ -4,14 +4,12 @@ import math
 import random
 import pygame
 import pymunk
-from mitc.enums import PickaxeType
-from mitc.settings import (
+from enums import PickaxeType
+from settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, BLOCK_SIZE, BORDER_WIDTH,
     BOUNCE_GRAVITY
 )
-from PIL import Image
-import arcade.hitbox as hb 
-from pymunk import autogeometry
+
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 PICKAXES_DIR = os.path.join(ASSETS_DIR, "pickaxes")
@@ -115,22 +113,14 @@ class Pickaxe(pygame.sprite.Sprite):
         self.body.position = self.x, self.y
         self.space.add(self.body)
 
-        phba = hb.PymunkHitBoxAlgorithm()
-        data = pygame.image.tostring(self.image, "RGBA")
-        im = Image.frombytes("RGBA", self.image.get_size(), data)
-
-        line_sets = phba.trace_image(im)
-        for line_set in line_sets:
-            polys = autogeometry.convex_decomposition(line_set, 1)
-            for poly in polys:
-                verts = phba.to_points_list(im, poly)
-                verts = [(x, -y) for (x, y) in verts]
-                shape = pymunk.Poly(self.body, verts)
-                shape.friction = 0.5
-                shape.elasticity = 0.01
-                shape.collision_type = 1
-                self.space.add(shape)
-                self.shapes.append(shape)
+        # Создаем простую прямоугольную форму для кирки
+        w, h = self.image.get_size()
+        shape = pymunk.Poly.create_box(self.body, (w, h))
+        shape.friction = 0.8  # увеличено трение для лучшего контакта
+        shape.elasticity = 0.1  # немного увеличено для более естественного отскока
+        shape.collision_type = 1
+        self.space.add(shape)
+        self.shapes.append(shape)
 
     # ---- публичное API (совместимость) ----
     def activate(self, pick_type: PickaxeType, size: str):
@@ -145,6 +135,7 @@ class Pickaxe(pygame.sprite.Sprite):
         self.active = True
 
     def reset_position(self):
+        # Начальная позиция в мировых координатах
         self.x = float(SCREEN_WIDTH // 2)
         self.y = float(SCREEN_HEIGHT // 4)
         if self.body is not None:
@@ -251,7 +242,7 @@ class Pickaxe(pygame.sprite.Sprite):
         bx, by = self.body.position
         # экранная позиция = мировая - смещение камеры
         self.rect.left = int(bx - self.rect.width // 2)
-        self.rect.top = int(by - self.rect.height // 2 + scroll_y)
+        self.rect.top = int(by - self.rect.height // 2 - scroll_y)
 
     def scroll_limit_y(self):
         """Нижний предел, при выходе за который кирка ресетится"""

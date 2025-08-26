@@ -1,6 +1,6 @@
 import pygame
-from mitc.game import Game
-from mitc.settings import SCREEN_WIDTH, SCREEN_HEIGHT
+from game import Game
+from settings import SCREEN_WIDTH, SCREEN_HEIGHT
 
 def main():
     pygame.init()
